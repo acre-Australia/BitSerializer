@@ -4,6 +4,7 @@
 *******************************************************************************/
 #include "msgpack_readers.h"
 #include "bitserializer/common/memory.h"
+#include <cstring>
 
 /*
 -----------------------------------------------------------
@@ -222,7 +223,12 @@ namespace
 	{
 		if (pos + sizeof(T) <= inputData.size())
 		{
-			outValue = Memory::BigEndianToNative(*reinterpret_cast<const T*>(inputData.data() + pos));
+			// memcpy rather than a reinterpret_cast load: MsgPack stores integers at any byte offset,
+			// so the cast was a misaligned read - undefined behaviour, which on 32-bit ARM can become
+			// an LDRD that traps or raises SIGBUS. Compilers lower memcpy to unaligned-safe loads.
+			T rawValue;
+			std::memcpy(&rawValue, inputData.data() + pos, sizeof(T));
+			outValue = Memory::BigEndianToNative(rawValue);
 			pos += sizeof(T);
 		}
 		else {
@@ -834,7 +840,10 @@ namespace
 	{
 		if (const auto data = binaryStreamReader.ReadSolidBlock(sizeof(T)); !data.empty())
 		{
-			outValue = Memory::BigEndianToNative(*reinterpret_cast<const T*>(data.data()));
+			// memcpy, not a reinterpret_cast load: see GetValue(std::string_view, ...) above.
+			T rawValue;
+			std::memcpy(&rawValue, data.data(), sizeof(T));
+			outValue = Memory::BigEndianToNative(rawValue);
 		}
 		else {
 			throw ParsingException("Unexpected end of input archive", 0, binaryStreamReader.GetPosition());
